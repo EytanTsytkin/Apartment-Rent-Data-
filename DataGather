@@ -1,0 +1,335 @@
+import time
+import datetime
+import random
+import psycopg2
+import urllib
+import requests
+import json
+import schedule
+import math
+import pandas as pd
+import pytz
+
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
+
+#Selenium Setup:
+chrome_options = webdriver.ChromeOptions()
+chrome_options.add_argument("--incognito")
+today = str(datetime.date.today())
+now = datetime.datetime.now()
+
+#Geolocate setup
+user_client = user_client
+user_secret = user_sceret
+user_key = user_key
+base_url = "https://maps.googleapis.com/maps/api/geocode/json?"
+
+time_zone = pytz.timezone('Israel')
+
+def scrape_yad2():
+    #initiate Selenium
+    browser = webdriver.Chrome(options=chrome_options)
+    time.sleep(max(3 + random.random(), random.randint(4, 7) * (random.random())))
+    browser.get('https://www.yad2.co.il/realestate/rent')
+    time.sleep(max(2 + random.random(), random.randint(2, 3) * (random.random())))
+    timeout = 20
+    try:
+        ## wait for feed to load
+        WebDriverWait(browser, timeout).until(EC.visibility_of_element_located((By.XPATH,
+            '//*[@id="feed_item_19"]/div[1]/div[1]/div[2]/span[1]')))
+        time.sleep(min(29 + random.random(), random.randint(20, 30) * (random.random())))
+        listings = browser.find_elements_by_class_name('feeditem')
+        time.sleep(max(2 + random.random(), random.randint(2, 3) * (random.random())))
+        for x in range(18):
+            try:
+                clean_listing = yad2_parser(listings[x].text)
+                coords = geolocate(clean_listing[0])
+                clean_listing.append(coords['lat'])
+                clean_listing.append(coords['lng'])
+                xyz_ppsm = euc_PPSM(clean_listing)
+                clean_listing.append(xyz_ppsm[0])
+                clean_listing.append(xyz_ppsm[1])
+                clean_listing.append(xyz_ppsm[2])
+                clean_listing.append(xyz_ppsm[3])
+                clean_listing.append('Yad2')
+                dB_upload(clean_listing)
+            except Exception as e:
+                print(e)
+        browser.quit()
+    except:
+        browser.quit()
+
+def yad2_parser(listing):
+    split_listing = list(listing.split('\n'))
+    clean_listing = [
+        split_listing[0] + split_listing[1].split(',')[-1],
+        split_listing[2],
+        split_listing[4],
+        split_listing[6],
+        split_listing[8].split(" ")[0].replace(',',''),
+        split_listing[9]]
+    if clean_listing[2] == "קרקע":
+        clean_listing[2] = 0;
+    if clean_listing[4].isalpha():
+        clean_listing[4] = 0;
+    if clean_listing[5] == "עודכן היום":
+        clean_listing[5] = today
+    return clean_listing
+
+def scrape_winwin():
+    browser = webdriver.Chrome(options=chrome_options)
+    time.sleep(max(3 + random.random(), random.randint(4, 7) * (random.random())))
+    browser.get('https://nadlan.ynet.co.il/search/apartments-for-rent/%D7%99%D7%A9%D7%A8%D7%90%D7%9C?vp=33.58346866242259,36.28568911878162|30.160302692688248,34.20154850883179&z=9')
+    time.sleep(max(2 + random.random(), random.randint(2, 3) * (random.random())))
+    timeout = 20
+    try:
+        ## wait for feed to load
+        time.sleep(min(29 + random.random(), random.randint(20, 30) * (random.random())))
+        # scroll_element = browser.find_element_by_tag_name('html')
+        # time.sleep(max(2 + random.random(), random.randint(2, 3) * (random.random())))
+        # scroll_element.send_keys(Keys.END)
+        # time.sleep(max(8 + random.random(), random.randint(10, 15) * (random.random())))
+        winwin_html = browser.page_source
+        raw_listing = winwin_html.split('address-price')
+        for i in raw_listing[2:]:
+            try:
+                clean_listing = winwin_parser(i)
+                coords = geolocate(clean_listing[0])
+                clean_listing.append(coords['lat'])
+                clean_listing.append(coords['lng'])
+                xyz_ppsm = euc_PPSM(clean_listing)
+                clean_listing.append(xyz_ppsm[0])
+                clean_listing.append(xyz_ppsm[1])
+                clean_listing.append(xyz_ppsm[2])
+                clean_listing.append(xyz_ppsm[3])
+                clean_listing.append('winwin')
+                dB_upload(clean_listing)
+            except Exception as e:
+                print(e)
+        browser.quit()
+    except:
+        browser.quit()
+
+def winwin_parser(listing):
+    clean_listing = []
+    # Address
+    clean_listing.append(listing.split('address-title')[1].split('<')[0].replace('>','').replace('"','')+" "+listing.split('"city"')[1].split('<')[0].replace('>',''))
+    #Rooms
+    try:
+        clean_listing.append(listing.split('"rooms"')[1].split('<')[0].replace('>','').split(' ')[0])
+    except:
+        clean_listing.append('-1')
+    # Floor
+    try:
+        clean_listing.append(listing.split('"floor"')[1].split('<')[0].replace('>','').split(' ')[2])
+    except:
+        clean_listing.append('-10')
+    #Area
+    try:
+        clean_listing.append(listing.split('"area"')[1].split('<')[0].replace('>','').split(' ')[0])
+    except:
+        clean_listing.append('-1')
+     #Price
+    clean_listing.append(listing.split('address-title')[1].split('>')[3].split(' ')[0].replace(',',''))
+    #Date_added
+    clean_listing.append(today)
+    return clean_listing
+
+# def scrape_homeless():
+#     today = datetime.date.today()
+#     browser = webdriver.Chrome(options=chrome_options)
+#     time.sleep(max(3 + random.random(), random.randint(4, 7) * (random.random())))
+#     browser.get('https://www.homeless.co.il/rent/')
+#     time.sleep(max(2 + random.random(), random.randint(2, 3) * (random.random())))
+#     timeout = 20
+#     try:
+#         ## wait for feed to load
+#         time.sleep(min(29 + random.random(), random.randint(20, 30) * (random.random())))
+#         homeless_html = browser.page_source
+#         time.sleep(max(2 + random.random(), random.randint(2, 3) * (random.random())))
+#         raw_listing = homeless_html.split('light')
+#         for i in range(1,26):
+#             clean_listing = homeless_parser(raw_listing[i])
+#             try:
+#                 coords = geolocate(clean_listing[0])
+#                 clean_listing.append(coords['lat'])
+#                 clean_listing.append(coords['lng'])
+#                 clean_listing.append('Homeless')
+#                 dB_upload(clean_listing)
+#             except:
+#                 pass
+#         browser.quit()
+#     except TimeoutException:
+#         browser.quit()
+
+# def homeless_parser(listing):
+#     clean_listing = []
+#     # Address
+#     clean_listing.append(
+#         listing.split('</td>')[2].split('>')[-2][0:-3] + " " + listing.split('</td>')[4].split('>')[-1])
+#     # Rooms
+#     clean_listing.append(listing.split('</td>')[5].split('>')[-1])
+#     # Floor
+#     clean_listing.append(listing.split('</td>')[6].split('>')[-1])
+#     if clean_listing[-1] == 'קרקע':
+#         clean_listing[-1] = 0
+#     #Area - Artificial
+#     clean_listing.append('-1')
+#     # Price
+#     clean_listing.append(listing.split('</td>')[7].split('>')[-1].split(' ')[0].replace(',', ''))
+#     # Date Added
+#     clean_listing.append(listing.split('</td>')[10].split('<')[-2][-10:])
+#     return clean_listing
+
+def scrape_madlan():
+    browser = webdriver.Chrome(options=chrome_options)
+    time.sleep(max(3 + random.random(), random.randint(4, 7) * (random.random())))
+    browser.get(
+        'https://www.madlan.co.il/for-rent/%D7%99%D7%A9%D7%A8%D7%90%D7%9C?filters=_0-10000___private_______0-10000__&sort=date-desc&tracking_search_source=filter_apply')
+    time.sleep(max(2 + random.random(), random.randint(2, 3) * (random.random())))
+    timeout = 20
+    try:
+        ## wait for feed to load
+        time.sleep(min(29 + random.random(), random.randint(20, 30) * (random.random())))
+        madlan_html = browser.page_source
+        time.sleep(max(2 + random.random(), random.randint(2, 3) * (random.random())))
+        raw_listing = madlan_html.split('css-zuyt5t e1sx3tzs1')
+        for i in raw_listing[1:-1]:
+            clean_listing = madlan_parser(i)
+            try:
+                coords = geolocate(clean_listing[0])
+                clean_listing.append(coords['lat'])
+                clean_listing.append(coords['lng'])
+                xyz_ppsm = euc_PPSM(clean_listing)
+                clean_listing.append(xyz_ppsm[0])
+                clean_listing.append(xyz_ppsm[1])
+                clean_listing.append(xyz_ppsm[2])
+                clean_listing.append(xyz_ppsm[3])
+                clean_listing.append('Madlan')
+                dB_upload(clean_listing)
+            except Exception as e:
+                print(e)
+        browser.quit()
+    except TimeoutException:
+        browser.quit()
+
+def madlan_parser(listing):
+    clean_listing = []
+    # Address
+    clean_listing.append(listing.split('property-address')[1].split('>')[2].split('<')[0])
+    # Rooms
+    try:
+        clean_listing.append(listing.split('property-rooms')[1].split('>')[1].split(' ')[0])
+    except:
+        clean_listing.append('-1')
+    # Floor
+    clean_listing.append('-10')
+    # Area
+    try:
+        clean_listing.append(listing.split('property-size')[1].split('>')[1].split(' ')[0])
+    except:
+        clean_listing.append('-1')
+    # Price
+    clean_listing.append(
+        listing.split('property-price')[1].split('>')[1].split('&')[0].replace(',', '').split('\u200f')[1])
+    # Date_added
+    clean_listing.append(today)
+    return clean_listing
+
+def geolocate(address):
+    '''
+    Returns the coordinates corresponding to an address.
+    :param address: Adress
+    :return: tuple: (lat, lng)
+    '''
+    params = {"address": address, "key": user_key}
+    url = f'{base_url}{urllib.parse.urlencode(params)}'
+    req = requests.get(url)
+    res = json.loads(req.content)
+    coord = res.get("results")[0].get('geometry').get('location')
+    return coord
+
+def euc_PPSM(listing):
+    '''
+    Adds euclidian coordinates and PPSM to a listing.
+    '''
+    rad_lat = math.radians(float(listing[6]))
+    rad_lng = math.radians(float(listing[7]))
+    x = (6317 * math.cos(rad_lat) * math.cos(rad_lng))
+    y = (6371 * math.cos(rad_lat) * math.sin(rad_lng))
+    z = (6371 * math.sin(rad_lat))
+    ppsm =  (float(listing[4]))/float((listing[3]))
+    return (x, y, z, ppsm)
+
+def dB_upload(listing):
+    '''
+    Uploads a listing to POSTGRES DB.
+    '''
+    # DB Connection setup ##
+    conn_string = "host='localhost' dbname='AptData' user='postgres' password='passwrod'"
+    conn = psycopg2.connect(conn_string)
+    cursor = conn.cursor()
+    ##                    ##
+    address = listing[0]
+    rooms = listing[1]
+    floor = listing[2]
+    area = listing[3]
+    price = listing[4]
+    lat = listing[6]
+    lng = listing[7]
+    x = listing[8]
+    y = listing[9]
+    z = listing[10]
+    PPSM = listing[11]
+    date_added = listing[5]
+    src = listing[-1]
+    value_tuple = (address, rooms, floor, area, price, lat, lng, x, y, z, PPSM, date_added, src)
+    cursor.execute(
+        "INSERT INTO aptrentdata (address, rooms, floor, area, price, lat, lng, x, y, z, ppsm, datecreated, src) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", value_tuple)
+    conn.commit()
+
+def clean_small_area():
+    # DB Connection setup ##
+    conn_string = "host='localhost' dbname='AptData' user='postgres' password='password'"
+    conn = psycopg2.connect(conn_string)
+    cursor = conn.cursor()
+    ##                    ##
+    query = """
+    DELETE FROM aptrentdata
+    WHERE area <15
+    """
+    cursor.execute(query)
+    conn.commit()
+
+def delete_dups():
+    # DB Connection setup ##
+    conn_string = "host='localhost' dbname='AptData' user='postgres' password='password'"
+    conn = psycopg2.connect(conn_string)
+    cursor = conn.cursor()
+    ##                    ##
+    query = """
+    DELETE FROM aptrentdata
+    WHERE id IN (
+        SELECT
+            id
+        FROM (
+            SELECT
+                id,
+                row_number() OVER w as rnum
+            FROM aptrentdata
+            WINDOW w AS (
+                PARTITION BY address, area, price
+                ORDER BY id
+            )
+
+        ) t
+    WHERE t.rnum > 1);
+    """
+    cursor.execute(query)
+    conn.commit()
+
